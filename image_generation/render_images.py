@@ -33,7 +33,7 @@ if INSIDE_BLENDER:
     import utils
   except ImportError as e:
     print("\nERROR")
-    print("Running render_images.py from Blender and cannot import utils.py.") 
+    print("Running render_images.py from Blender and cannot import utils.py.")
     print("You may need to add a .pth file to the site-packages of Blender's")
     print("bundled python with a command like this:\n")
     print("echo $PWD >> $BLENDER/$VERSION/python/lib/python3.5/site-packages/clevr.pth")
@@ -168,7 +168,7 @@ def main(args):
     os.makedirs(args.output_scene_dir)
   if args.save_blendfiles == 1 and not os.path.isdir(args.output_blend_dir):
     os.makedirs(args.output_blend_dir)
-  
+
   all_scene_paths = []
   for i in range(args.num_images):
     img_path = img_template % (i + args.start_idx)
@@ -307,7 +307,7 @@ def render_scene(args,
       bpy.data.objects['Lamp_Fill'].location[i] += rand(args.fill_light_jitter)
 
   # Now make some random objects
-  objects, blender_objects = add_random_objects(scene_struct, num_objects, args, camera)
+  objects, blender_objects = add_random_objects(scene_struct, num_objects, args, camera, render_args)
 
   # Render the scene and dump the scene data structure
   scene_struct['objects'] = objects
@@ -326,7 +326,7 @@ def render_scene(args,
     bpy.ops.wm.save_as_mainfile(filepath=output_blendfile)
 
 
-def add_random_objects(scene_struct, num_objects, args, camera):
+def add_random_objects(scene_struct, num_objects, args, camera, render_args):
   """
   Add random objects to the current blender scene
   """
@@ -350,6 +350,7 @@ def add_random_objects(scene_struct, num_objects, args, camera):
   positions = []
   objects = []
   blender_objects = []
+  color_shape_pairs = set()
   for i in range(num_objects):
     # Choose a random size
     size_name, r = random.choice(size_mapping)
@@ -365,9 +366,12 @@ def add_random_objects(scene_struct, num_objects, args, camera):
       if num_tries > args.max_retries:
         for obj in blender_objects:
           utils.delete_object(obj)
-        return add_random_objects(scene_struct, num_objects, args, camera)
-      x = random.uniform(-3, 3)
-      y = random.uniform(-3, 3)
+        return add_random_objects(scene_struct, num_objects, args, camera, render_args)
+      if i == 0:
+        x, y = 0, 0
+      else:
+        x = random.uniform(-3, 3)
+        y = random.uniform(-3, 3)
       # Check to make sure the new object is further than min_dist from all
       # other objects, and further than margin along the four cardinal directions
       dists_good = True
@@ -397,6 +401,10 @@ def add_random_objects(scene_struct, num_objects, args, camera):
     if shape_color_combos is None:
       obj_name, obj_name_out = random.choice(object_mapping)
       color_name, rgba = random.choice(list(color_name_to_rgba.items()))
+      # Make sure color and shapes are unique
+      while '{}-{}'.format(obj_name_out, color_name) in color_shape_pairs:
+        color_name, rgba = random.choice(list(color_name_to_rgba.items()))
+      color_shape_pairs.add('{}-{}'.format(obj_name_out, color_name))
     else:
       obj_name_out, color_choices = random.choice(shape_color_combos)
       color_name = random.choice(color_choices)
@@ -432,6 +440,14 @@ def add_random_objects(scene_struct, num_objects, args, camera):
       'color': color_name,
     })
 
+    if check_visibility(blender_objects, args.min_pixels_per_object):
+      old_filepath = render_args.filepath
+      render_args.filepath = old_filepath[:-4] + '_{}.png'.format(i)
+      bpy.ops.render.render(write_still=True)
+      render_args.filepath = old_filepath
+    else:
+        break
+
   # Check that all objects are at least partially visible in the rendered image
   all_visible = check_visibility(blender_objects, args.min_pixels_per_object)
   if not all_visible:
@@ -440,7 +456,7 @@ def add_random_objects(scene_struct, num_objects, args, camera):
     print('Some objects are occluded; replacing objects')
     for obj in blender_objects:
       utils.delete_object(obj)
-    return add_random_objects(scene_struct, num_objects, args, camera)
+    return add_random_objects(scene_struct, num_objects, args, camera, render_args)
 
   return objects, blender_objects
 
@@ -448,7 +464,7 @@ def add_random_objects(scene_struct, num_objects, args, camera):
 def compute_all_relationships(scene_struct, eps=0.2):
   """
   Computes relationships between all pairs of objects in the scene.
-  
+
   Returns a dictionary mapping string relationship names to lists of lists of
   integers, where output[rel][i] gives a list of object indices that have the
   relationship rel with object i. For example if j is in output['left'][i] then
